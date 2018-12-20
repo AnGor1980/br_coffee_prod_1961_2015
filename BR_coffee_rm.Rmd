@@ -108,12 +108,12 @@ Let's try to check the lack of perfect multicollinearity in the predictors;
 pairs(rain_temp_crop[c(-1,-5)])
 ```
 
+Obviously there ist no multicollinearity in the predictors.
+
 Durbin-Watson test for autocorrelation of disturbances:
 ```{r dwtest, echo=FALSE, message=TRUE, warning=FALSE}
 dwtest(tonnes ~ pr+t_cel+ha, data = rain_temp_crop)
 ```
-
-Obviously there ist no multicollinearity in the predictors.
 
 Breusch-Pagan test against heteroskedasticity:
 ```{r bptest, echo=FALSE, message=TRUE, warning=FALSE}
