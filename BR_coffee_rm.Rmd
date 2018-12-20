@@ -1,0 +1,170 @@
+---
+title: "BRAZILIAN COFFEE PRODUCTION (1961-2015)"
+author: "Andriy Gorshkov"
+date: "18 Dezember 2018"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: yes
+---
+
+```{r setup, include=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+library(ggplot2)
+library(dplyr)
+library(readxl)
+library(knitr)
+library(lmtest)
+
+#DATA
+rain <- read_xls("pr_1901_2015.xls")
+temp <- read_xls("tas_1901_2015.xls")
+br_crop <- as_data_frame(read.csv("FAOSTAT_data_12-19-2018.csv"))
+br_crop <- br_crop %>% 
+  filter((Unit == "ha" | Unit == "tonnes") & Year <= 2015)
+
+#Fitting
+rain_temp <- rain %>% 
+  inner_join(temp, by = c("Year", "Month")) %>% 
+  select(Year, Month, pr, t_cel=tas) %>% 
+  filter(Year %in% seq(from=1961, to=max(as.integer(br_crop$Year))))
+rain_temp$Year <- as.factor(rain_temp$Year)
+
+br_crop_ha <- br_crop %>% 
+  filter(Unit == "ha") 
+
+br_crop_t <- br_crop %>% 
+  filter(Unit == "tonnes") 
+
+br_crop_cum <- br_crop_ha %>% 
+  inner_join(br_crop_t, by = c("Year")) %>% 
+  select(Year, ha=Value.x, tonnes=Value.y)
+
+br_crop_cum$Year <- as.character(br_crop_cum$Year)
+
+rain_temp_crop <- rain_temp %>% 
+  group_by(Year) %>% 
+  summarise(pr = mean(pr), t_cel = mean(t_cel)) %>% 
+  inner_join(br_crop_cum, by = c("Year")) %>% 
+  select(Year, pr, t_cel, ha, tonnes)
+
+lmp <- function (modelobject) {
+ if (class(modelobject) != "lm") stop("Not an object of class 'lm' ")
+ f <- summary(modelobject)$fstatistic
+ p <- pf(f[1],f[2],f[3],lower.tail=F)
+ attributes(p) <- NULL
+ return(p)
+}
+
+```
+
+## Production
+Lets look at the Diagram 1 of the production of coffee between 1960 and 2015 crops years.
+Here you can see the productivity (1000 tonns) and harvested area (1000 ha)[^1].
+
+[^1]: [FAO Stat](http://www.fao.org/faostat/en/#data/QC) 
+
+```{r br_weather_m, echo=FALSE, warning=FALSE}
+ggplot(br_crop, aes(x=as.factor(Year), y = Value/1000)) +
+  geom_col(aes(fill = Unit), position = "dodge") +
+  scale_x_discrete(breaks = as.factor(seq(from=1960, to=max(as.integer(br_crop$Year)),by = 5)))+
+  geom_vline(xintercept = 42, color = "blue", size = 1, alpha = 0.9, linetype = "longdash") +
+  geom_vline(xintercept = 52, color = "blue", size = 1, alpha = 0.9, linetype = "longdash") +
+  xlab("Year") +
+  ylab("Thousand units") +
+  ggtitle("Diagram 1, Area Harvested (1000 ha) / Production (1000 t)")+
+  theme_classic()
+```
+
+## Weather
+Of course, the significant effect for the coffee crop makes the weather (Diagram 2 and Diagram 3)[^2]:
+
+[^2]: [Climate Change Knowledge Portal](http://sdwebx.worldbank.org/climateportal/index.cfm?page=downscaled_data_download&menu=historical) 
+
+```{r pressure, echo=FALSE, warning=FALSE}
+ggplot(rain_temp) +
+  geom_boxplot( aes(x=Year, y=pr), fill = "blue", alpha = 0.5) +
+  scale_x_discrete(breaks = as.factor(seq(from=1960, to=max(as.integer(br_crop$Year)),by = 5))) +
+  ylab("mm") +
+  ggtitle("Diagram 2, Precipitation(mm)")+
+  theme_classic()
+
+ggplot(rain_temp) +
+  geom_boxplot( aes(x=Year, y=t_cel), fill = "red", alpha = 0.5) +
+  scale_x_discrete(breaks = as.factor(seq(from=1960, to=max(as.integer(br_crop$Year)),by = 5))) +
+  ggtitle("Diagram 3, Temperature(t° C)")+
+  ylab("t° C") +
+  theme_classic()
+```
+
+## Linear models
+
+The dependent variable in our model is Production in tonns.
+Predictor-variables: harvested area (ha), Precipitation (pr) and temperature (t_cel).
+Let's try to check the lack of perfect multicollinearity in the predictors;
+
+```{r multicollinearity, echo=FALSE, warning=FALSE}
+pairs(rain_temp_crop[c(-1,-5)])
+```
+
+Durbin-Watson test for autocorrelation of disturbances:
+```{r dwtest, echo=FALSE, message=TRUE, warning=FALSE}
+dwtest(tonnes ~ pr+t_cel+ha, data = rain_temp_crop)
+```
+
+Obviously there ist no multicollinearity in the predictors.
+
+Breusch-Pagan test against heteroskedasticity:
+```{r bptest, echo=FALSE, message=TRUE, warning=FALSE}
+bptest(tonnes ~ pr+t_cel+ha, data = rain_temp_crop)
+```
+
+
+
+Let's try to fit the model without interaction between the predictors (Table 1,  Model 1):
+```{r LinearModel_1_1, echo=FALSE, warning=FALSE}
+r_model_1 <- lm(data=rain_temp_crop,  tonnes ~ pr+t_cel+ha)
+s_1 <- summary(r_model_1)
+a_1 <- anova(r_model_1)
+kable(s_1$coefficients, caption = paste("Table 1, Model 1", Reduce(paste, deparse(s_1$terms))))
+```
+
+Adjusted R-squared: `r s_1$adj.r.squared`
+
+P-Value: `r lmp(r_model_1)`
+
+and with interaction between the Precipitation (pr) and the temperature (t_cel) predictors (Table 2,  Model 2):
+```{r LinearModel_1_2, echo=FALSE, warning=FALSE}
+r_model_2 <- lm(data=rain_temp_crop,  tonnes ~ pr*t_cel+ha)
+s_2 <- summary(r_model_2)
+a_2 <- anova(r_model_2)
+kable(s_2$coefficients, caption = paste("Table 2,  Model 2", Reduce(paste, deparse(s_2$terms))))
+```
+
+Adjusted R-squared: `r s_2$adj.r.squared`
+
+P-Value: `r lmp(r_model_2)`
+
+The adjusted R-squared and the P-Values of both models are very close to each other. So maybe it makes no sense to complicate the model.
+Let's build predictions based on these two models and show them on the Diagram 4: 
+
+```{r Predictions, echo=FALSE, warning=FALSE}
+rain_temp_crop$p_tonn_model1 <- predict(r_model_1)
+rain_temp_crop$p_tonn_model2 <- predict(r_model_2)
+
+ggplot(rain_temp_crop, aes(as.integer(Year)))+
+  geom_line(aes(y = tonnes/1000, color = "Real value, tons")) +
+  geom_line(aes(y = p_tonn_model1/1000, color = "Model 1")) +
+  geom_line(aes(y = p_tonn_model2/1000, color = "Model 2")) +
+  geom_vline(xintercept = 2011, color = "blue", size = 0.5, alpha = 0.9, linetype = "longdash") +
+  #geom_vline(xintercept = 2015, color = "blue", size = 0.5, alpha = 0.9, linetype = "longdash") +
+  scale_x_continuous(breaks = (seq(from=1960, to=max(as.integer(br_crop$Year)),by = 5)))+
+  ggtitle("Diagram 4, Comparison of predictions") +
+  xlab("Year") +
+  ylab("Thousand tons") +  
+  theme_classic()
+```
+
+We can noted that substantial productivity was significantly increased between 2002 and 2012 (Diagram 1) and our predictions works after that not so good as before. But I assume, that after the boom of the technical progress the models will show better result or we need to include another predictor, like Investing in the agriculture sector. 
+
