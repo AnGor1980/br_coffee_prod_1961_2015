@@ -16,6 +16,8 @@ library(dplyr)
 library(readxl)
 library(knitr)
 library(lmtest)
+library(car)
+library(data.table)
 
 #DATA
 rain <- read_xls("pr_1901_2015.xls")
@@ -60,8 +62,8 @@ lmp <- function (modelobject) {
 ```
 
 ## Production
-Lets look at the Diagram 1 of the production of coffee between 1960 and 2015 crops years.
-Here you can see the productivity (1000 tonns) and harvested area (1000 ha)[^1].
+Let's look at Diagram 1 of the production of coffee between 1960 and 2015 crops years.
+Here you can see the productivity (1000 tonnes) and harvested area (1000 ha)[^1].
 
 [^1]: [FAO Stat](http://www.fao.org/faostat/en/#data/QC) 
 
@@ -102,26 +104,47 @@ ggplot(rain_temp) +
 
 The dependent variable in our model is Production in tonns.
 Predictor-variables: harvested area (ha), Precipitation (pr) and temperature (t_cel).
-Let's try to check the lack of perfect multicollinearity in the predictors;
+
+###Normality test
+Quantile-Comparison Plots and Shapiro-Wilk normality tests:
+```{r Normality1, echo=FALSE, message=FALSE, warning=FALSE}
+qq <- qqPlot(rain_temp_crop$ha, main = "Harvested area (ha)", ylab = "",  xlab = "")
+```
+
+p-value = `r shapiro.test(rain_temp_crop$ha)$p.value` If the P-value less then 0.05 then it means that we have got not a normal distribution for observation. But another side, if we exclude some of the observations, Quantile-Comparison Plot show us enough normal distribution.
+
+```{r Normality2, echo=FALSE, message=FALSE, warning=FALSE}
+qq <- qqPlot(rain_temp_crop$pr, main = "Precipitation (pr)", ylab = "",  xlab = "")
+```
+
+p-value = `r shapiro.test(rain_temp_crop$pr)$p.value`
+
+```{r Normality3, echo=FALSE, message=FALSE, warning=FALSE}
+qq <- qqPlot(rain_temp_crop$t_cel, main = "Temperature (t_cel)", ylab = "",  xlab = "")
+```
+
+p-value = `r shapiro.test(rain_temp_crop$t_cel)$p.value`
+
+###Lack of perfect multicollinearity in the predictors test:
 
 ```{r multicollinearity, echo=FALSE, warning=FALSE}
 pairs(rain_temp_crop[c(-1,-5)])
 ```
 
-Obviously there ist no multicollinearity in the predictors.
+Obviously, there is no multicollinearity in the predictors.
 
-Durbin-Watson test for autocorrelation of disturbances:
+###Durbin-Watson test for autocorrelation of disturbances:
 ```{r dwtest, echo=FALSE, message=TRUE, warning=FALSE}
 dwtest(tonnes ~ pr+t_cel+ha, data = rain_temp_crop)
 ```
 
-Breusch-Pagan test against heteroskedasticity:
+###Breusch-Pagan test against heteroskedasticity:
 ```{r bptest, echo=FALSE, message=TRUE, warning=FALSE}
 bptest(tonnes ~ pr+t_cel+ha, data = rain_temp_crop)
 ```
 
 
-
+###Model 1
 Let's try to fit the model without interaction between the predictors (Table 1,  Model 1):
 ```{r LinearModel_1_1, echo=FALSE, warning=FALSE}
 r_model_1 <- lm(data=rain_temp_crop,  tonnes ~ pr+t_cel+ha)
@@ -134,7 +157,8 @@ Adjusted R-squared: `r s_1$adj.r.squared`
 
 P-Value: `r lmp(r_model_1)`
 
-and with interaction between the Precipitation (pr) and the temperature (t_cel) predictors (Table 2,  Model 2):
+###Model 2
+and with an interaction between the Precipitation (pr) and the temperature (t_cel) predictors (Table 2,  Model 2):
 ```{r LinearModel_1_2, echo=FALSE, warning=FALSE}
 r_model_2 <- lm(data=rain_temp_crop,  tonnes ~ pr*t_cel+ha)
 s_2 <- summary(r_model_2)
@@ -146,8 +170,9 @@ Adjusted R-squared: `r s_2$adj.r.squared`
 
 P-Value: `r lmp(r_model_2)`
 
+###Prediction overview
 The adjusted R-squared and the P-Values of both models are very close to each other. So maybe it makes no sense to complicate the model.
-Let's build predictions based on these two models and show them on the Diagram 4: 
+Let's build predictions based on these two models and show them on Diagram 4: 
 
 ```{r Predictions, echo=FALSE, warning=FALSE}
 rain_temp_crop$p_tonn_model1 <- predict(r_model_1)
@@ -166,5 +191,72 @@ ggplot(rain_temp_crop, aes(as.integer(Year)))+
   theme_classic()
 ```
 
-We can noted that substantial productivity was significantly increased between 2002 and 2012 (Diagram 1) and our predictions works after that not so good as before. But I assume, that after the boom of the technical progress the models will show better result or we need to include another predictor, like Investing in the agriculture sector. 
+We can note that substantial productivity was significantly increased between 2002 and 2012 (Diagram 1) and our predictions works after that not so good as before. But I assume, that after the boom of the technical progress the models will show better result or we need to include another predictor, like Investing in the agriculture sector. 
+
+##Improving model
+Maybe we can improve the model if we define the most important months for crop. But let's analyze, how to impact previous year for the crop of the current year.
+
+```{r DataForImproving, echo=FALSE, warning=FALSE}
+temp_by_month <- as_data_frame(dcast(temp , Year~Month, value.var = "tas"))
+rain_by_month <- as_data_frame(dcast(rain , Year~Month, value.var = "pr"))
+
+rain_by_month$Year <- as.character(as.integer(rain_by_month$Year) - 1)
+temp_by_month$Year <- as.character(as.integer(temp_by_month$Year) - 1)
+
+kable(head(temp_by_month,5),caption = "temperature")
+kable(head(rain_by_month,5),caption = "Precipitation")
+#rain_by_month$Year <- as.character(as.integer(rain_by_month$Year) - 1)
+
+twelve_m_t <-  br_crop_cum %>% 
+  inner_join(temp_by_month, c("Year")) 
+
+twelve_m_p <-  br_crop_cum %>% 
+  inner_join(rain_by_month, c("Year"))
+#"Model for temperature, tonnes ~ ."
+r_model <- lm(data=twelve_m_t[-1],  tonnes ~ .)
+summary(r_model)
+#"Model for Precipitation, tonnes ~ ."
+r_model <- lm(data=twelve_m_p[-1],  tonnes ~ .)
+summary(r_model)
+```
+
+So, let's use the month 6 with observation for "temperature" and 2, 5, 9, 10 with observation for precipitation.
+And we got follow table for the model:
+
+```{r DataForImproving1, echo=FALSE, warning=FALSE}
+twelve_m <-  br_crop_cum %>% 
+  inner_join(temp_by_month, c("Year")) %>% 
+  inner_join(rain_by_month, c("Year")) %>% 
+  select(Year, ha, tonnes, t6 = `6.x`, p2p = `2.y`, p5p=`5.y`, p9p=`9.y`, p10p=`10.y`)
+  #select(Year, ha, tonnes, t1 = `1.x`, t4 = `4.x`, t7 = `7.x`, t9 = `9.x`, r2p=`9.y`)
+
+kable(head(twelve_m))
+```
+
+###Improved model
+
+```{r DataForImproving3, echo=FALSE, warning=FALSE}
+r_model3 <- lm(data=twelve_m[-1],  tonnes ~ .)
+summary(r_model3)
+
+rain_temp_crop <- rain_temp_crop %>% 
+  left_join(twelve_m, c("Year")) %>% 
+  select(Year, pr, t_cel, ha = ha.x, tonnes = tonnes.x, t6,p2p, p5p, p9p, p10p, p_tonn_model1, p_tonn_model2)
+
+rain_temp_crop$p_tonn_model3 <- predict(r_model3, rain_temp_crop)
+
+ggplot(rain_temp_crop, aes(as.integer(Year)))+
+  geom_line(aes(y = tonnes/1000, color = "Real value, tons"), size = 1) +
+  geom_line(aes(y = p_tonn_model1/1000, color = "Model 1")) +
+  #geom_line(aes(y = p_tonn_model2/1000, color = "Model 2")) +
+  geom_line(aes(y = p_tonn_model3/1000, color = "Improved model"), size = 1) +
+  geom_vline(xintercept = 2011, color = "blue", size = 0.5, alpha = 0.9, linetype = "longdash") +
+  #geom_vline(xintercept = 2015, color = "blue", size = 0.5, alpha = 0.9, linetype = "longdash") +
+  scale_x_continuous(breaks = (seq(from=1960, to=max(as.integer(br_crop$Year)),by = 5)))+
+  ggtitle("Diagram 5, Comparison of predictions") +
+  xlab("Year") +
+  ylab("Thousand tons") +  
+  theme_classic()
+```
+
 
